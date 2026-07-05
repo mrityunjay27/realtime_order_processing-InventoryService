@@ -1,6 +1,6 @@
 from rest_framework import viewsets, generics
-from .models import Product, Inventory
-from .serializers import ProductSerializer, InventorySerializer
+from ..models import Product, Inventory
+from .serializer import ProductSerializer, InventorySerializer
 
 
 class ProductViewSet(viewsets.ModelViewSet):
