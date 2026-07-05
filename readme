@@ -1,0 +1,9 @@
+This project is counterpart of Order Service.
+This has product model.
+
+Postgres runs on 5434
+More info in docker compose file
+
+To run this server.
+1. docker compsoe up -d
+2. python3 manage.py runserver 127.0.0.1:8000
