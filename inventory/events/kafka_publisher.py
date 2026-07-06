@@ -1,6 +1,10 @@
 import json
+import logging
+
 from confluent_kafka import Producer
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 
 class KafkaEventPublisher:
@@ -13,4 +17,4 @@ class KafkaEventPublisher:
     def publish(self, topic: str, event: dict):
         self.producer.produce(topic, value=json.dumps(event).encode("utf-8"))
         self.producer.flush()
-        print(f"Event sent to Kafka topic: {topic}")
+        logger.info("Event sent to Kafka topic: %s", topic)

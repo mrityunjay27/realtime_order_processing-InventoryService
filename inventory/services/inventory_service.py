@@ -1,3 +1,5 @@
+import logging
+
 from django.db import transaction
 
 from inventory.models import Inventory
@@ -5,6 +7,8 @@ from inventory.events.event_publisher import (
     publish_inventory_reserved,
     publish_inventory_failed,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class InventoryService:
@@ -37,7 +41,7 @@ class InventoryService:
             order_id, product_id, quantity
         )
 
-        print(f"✅ Reserved: {product_id} x {quantity} for order {order_id}")
+        logger.info("Reserved: %s x %s for order %s", product_id, quantity, order_id)
 
         return True
 
@@ -52,4 +56,4 @@ class InventoryService:
         inventory.available_quantity += quantity
         inventory.save()
 
-        print(f"♻️ Released: {product_id} x {quantity} for order {order_id}")
+        logger.info("Released: %s x %s for order %s", product_id, quantity, order_id)

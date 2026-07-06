@@ -1,6 +1,10 @@
 import json
+import logging
+
 from confluent_kafka import Consumer, KafkaError
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 from inventory.events.inventory_events import ORDER_CREATED
 from inventory.services.inventory_service import InventoryService
@@ -19,7 +23,7 @@ class KafkaEventConsumer:
 
     def handle_order_created(self, event: dict):
 
-        print(f"Received event: {event}")
+        logger.info("Received event: %s", event)
 
         for item in event["items"]:
             InventoryService.reserve_inventory(
@@ -30,7 +34,7 @@ class KafkaEventConsumer:
 
     def start(self):
 
-        print("Inventory Consumer Started...")
+        logger.info("Inventory Consumer Started...")
 
         try:
             while True:
@@ -41,7 +45,7 @@ class KafkaEventConsumer:
                     if msg.error().code() == KafkaError._PARTITION_EOF:
                         continue
                     else:
-                        print(f"Consumer error: {msg.error()}")
+                        logger.error("Consumer error: %s", msg.error())
                         break
 
                 topic = msg.topic()
