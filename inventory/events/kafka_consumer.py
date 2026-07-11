@@ -1,4 +1,3 @@
-import json
 import logging
 
 from confluent_kafka import Consumer, KafkaError
@@ -6,6 +5,7 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+from inventory.events.event_envelope import EventEnvelope
 from inventory.events.inventory_events import ORDER_CREATED
 from inventory.services.inventory_service import InventoryService
 
@@ -21,15 +21,14 @@ class KafkaEventConsumer:
         self.consumer = Consumer(config)
         self.consumer.subscribe([ORDER_CREATED])
 
-    def handle_order_created(self, event: dict):
+    def handle_order_created(self, envelope: EventEnvelope):
+        event = envelope.payload
 
-        correlation_id = event.get("correlation_id", "unknown")
-
-        logger.info("Received event [%s]: %s", correlation_id, event)
+        logger.info("Received event [%s]: %s", envelope.correlation_id, event)
 
         for item in event["items"]:
             InventoryService.reserve_inventory(
-                correlation_id=correlation_id,
+                correlation_id=envelope.correlation_id,
                 order_id=event["order_id"],
                 product_id=item["product_id"],
                 quantity=item["quantity"],
@@ -51,11 +50,10 @@ class KafkaEventConsumer:
                         logger.error("Consumer error: %s", msg.error())
                         break
 
-                topic = msg.topic()
-                event = json.loads(msg.value().decode("utf-8"))
+                envelope = EventEnvelope.from_json(msg.value().decode("utf-8"))
 
-                if topic == ORDER_CREATED:
-                    self.handle_order_created(event)
+                if envelope.event_type == ORDER_CREATED:
+                    self.handle_order_created(envelope)
         except KeyboardInterrupt:
             pass
         finally:
