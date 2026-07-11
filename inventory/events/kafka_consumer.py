@@ -23,10 +23,13 @@ class KafkaEventConsumer:
 
     def handle_order_created(self, event: dict):
 
-        logger.info("Received event: %s", event)
+        correlation_id = event.get("correlation_id", "unknown")
+
+        logger.info("Received event [%s]: %s", correlation_id, event)
 
         for item in event["items"]:
             InventoryService.reserve_inventory(
+                correlation_id=correlation_id,
                 order_id=event["order_id"],
                 product_id=item["product_id"],
                 quantity=item["quantity"],

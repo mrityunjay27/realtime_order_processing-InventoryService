@@ -15,7 +15,7 @@ class InventoryService:
 
     @staticmethod
     @transaction.atomic
-    def reserve_inventory(order_id: str, product_id: str, quantity: int):
+    def reserve_inventory(correlation_id: str, order_id: str, product_id: str, quantity: int):
 
         try:
             inventory = Inventory.objects.select_for_update().get(
@@ -24,13 +24,13 @@ class InventoryService:
 
         except Inventory.DoesNotExist:
             publish_inventory_failed(
-                order_id, product_id, "PRODUCT_NOT_FOUND"
+                correlation_id, order_id, product_id, "PRODUCT_NOT_FOUND"
             )
             return False
 
         if inventory.available_quantity < quantity:
             publish_inventory_failed(
-                order_id, product_id, "OUT_OF_STOCK"
+                correlation_id, order_id, product_id, "OUT_OF_STOCK"
             )
             return False
 
@@ -38,7 +38,7 @@ class InventoryService:
         inventory.save()
 
         publish_inventory_reserved(
-            order_id, product_id, quantity
+            correlation_id, order_id, product_id, quantity
         )
 
         logger.info("Reserved: %s x %s for order %s", product_id, quantity, order_id)
