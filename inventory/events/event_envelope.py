@@ -1,3 +1,22 @@
+# EventEnvelope: The standard contract for every message on Kafka.
+#
+# Why this exists:
+#   Every downstream feature (idempotency, retries, DLQ, tracing, outbox)
+#   depends on consistent metadata. Instead of adding fields ad-hoc,
+#   we define the contract once here.
+#
+# Fields:
+#   event_id       - Unique ID per event. Used by ProcessedEvent to detect
+#                    duplicate delivery and prevent re-processing.
+#   event_type     - Routes consumers to the correct handler without
+#                    relying solely on the Kafka topic name.
+#   correlation_id - Groups all events from a single user request into
+#                   one trace. Essential for debugging distributed flows.
+#   occurred_at    - When the event was created (not when it was consumed).
+#                   Used for debugging, auditing, and future TTL/cleanup.
+#   payload        - The actual business data (order details, inventory
+#                    updates, etc.). Consumers access this after unwrapping.
+
 import json
 import logging
 from dataclasses import dataclass, field, asdict
