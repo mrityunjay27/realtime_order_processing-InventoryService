@@ -1,20 +1,18 @@
 # Inventory Kafka Consumer: Processes order-created events from Kafka,
 # reserving stock for each item in the order.
 #
-# Idempotency guarantee:
-#   Kafka delivers messages at-least-once. This consumer ensures each
-#   event is processed exactly once by wrapping the business logic and
-#   the ProcessedEvent insert in a single database transaction.
+# Offset commit strategy:
+#   Kafka auto-commit is DISABLED. The offset is committed manually only
+#   AFTER the database transaction succeeds. This guarantees:
 #
-# Failure scenarios handled:
-#   1. Duplicate delivery → already_processed() check skips it
-#   2. Crash after processing but before mark_processed → Kafka
-#      redelivers; already_processed() catches it on retry
-#   3. Crash after mark_processed but before commit → transaction
-#      rolls back; Kafka redelivers; clean retry
-#   4. Two consumers process same event concurrently → one succeeds,
-#      the other gets IntegrityError from unique constraint → caught
-#      and logged, no data corruption
+#   - DB commit + Kafka commit are both done → event fully processed
+#   - DB fails → no Kafka commit → Kafka redelivers on restart
+#   - Crash between DB commit and Kafka commit → Kafka redelivers,
+#     but ProcessedEvent's unique constraint prevents re-processing
+#
+# This is the foundation for retry and DLQ: if processing fails,
+# the offset is NOT committed, so Kafka will redeliver the message
+# on consumer restart. A future retry limit can then route to DLQ.
 
 import logging
 
@@ -37,6 +35,7 @@ class KafkaEventConsumer:
             "bootstrap.servers": settings.KAFKA_BOOTSTRAP_SERVERS,
             "group.id": "inventory-service-group",
             "auto.offset.reset": "earliest",
+            "enable.auto.commit": False,
         }
         self.consumer = Consumer(config)
         self.consumer.subscribe([ORDER_CREATED])
@@ -66,25 +65,35 @@ class KafkaEventConsumer:
                 if msg.error():
                     if msg.error().code() == KafkaError._PARTITION_EOF:
                         continue
-                    else:
-                        logger.error("Consumer error: %s", msg.error())
-                        break
+                    logger.error("Consumer error: %s", msg.error())
+                    continue
 
                 envelope = EventEnvelope.from_json(msg.value().decode("utf-8"))
 
                 try:
                     with transaction.atomic():
                         if IdempotencyService.already_processed(envelope.event_id):
-                            logger.info("Event %s already processed, skipping", envelope.event_id)
-                            continue
+                            logger.info("Event %s already processed", envelope.event_id)
 
-                        if envelope.event_type == ORDER_CREATED:
+                        elif envelope.event_type == ORDER_CREATED:
                             self.handle_order_created(envelope)
                             IdempotencyService.mark_processed(envelope.event_id, envelope.event_type)
+
                         else:
                             logger.warning("No handler for event_type %s", envelope.event_type)
+
+                    # DB transaction succeeded — safe to commit Kafka offset
+                    self.consumer.commit(msg)
+
                 except IntegrityError:
-                    logger.info("Event %s already processed by another consumer", envelope.event_id)
+                    # Database says duplicate (race condition) — safe to commit
+                    logger.info("Duplicate event %s, committing offset", envelope.event_id)
+                    self.consumer.commit(msg)
+
+                except Exception:
+                    # Processing failed — do NOT commit.
+                    # Kafka will redeliver on consumer restart.
+                    logger.exception("Failed processing event %s, will retry", envelope.event_id)
 
         except KeyboardInterrupt:
             pass
