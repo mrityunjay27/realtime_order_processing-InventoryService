@@ -1,12 +1,12 @@
 import logging
+from uuid import uuid4
 
 from django.db import transaction, DatabaseError
 
 from inventory.models import Inventory
-from inventory.events.event_publisher import (
-    publish_inventory_reserved,
-    publish_inventory_failed,
-)
+from inventory.events.event_envelope import EventEnvelope
+from inventory.events.inventory_events import INVENTORY_RESERVED, INVENTORY_FAILED
+from inventory.events.outbox_service import OutboxService
 from inventory.events.exceptions import (
     RetryableEventException,
     NonRetryableEventException,
@@ -26,32 +26,21 @@ class InventoryService:
                 product_id=product_id
             )
         except Inventory.DoesNotExist:
-            publish_inventory_failed(
-                correlation_id, order_id, product_id, "PRODUCT_NOT_FOUND"
-            )
-            raise NonRetryableEventException(
-                f"Product {product_id} not found"
-            )
+            _publish_inventory_failed(correlation_id, order_id, product_id, "PRODUCT_NOT_FOUND")
+            return False
         except DatabaseError as exc:
             raise RetryableEventException(
                 f"Database error while fetching inventory: {exc}"
             ) from exc
 
         if inventory.available_quantity < quantity:
-            publish_inventory_failed(
-                correlation_id, order_id, product_id, "OUT_OF_STOCK"
-            )
-            raise NonRetryableEventException(
-                f"Insufficient stock for product {product_id}: "
-                f"requested {quantity}, available {inventory.available_quantity}"
-            )
+            _publish_inventory_failed(correlation_id, order_id, product_id, "OUT_OF_STOCK")
+            return False
 
         inventory.available_quantity -= quantity
         inventory.save()
 
-        publish_inventory_reserved(
-            correlation_id, order_id, product_id, quantity
-        )
+        _publish_inventory_reserved(correlation_id, order_id, product_id, quantity)
 
         logger.info("Reserved: %s x %s for order %s", product_id, quantity, order_id)
 
@@ -69,3 +58,39 @@ class InventoryService:
         inventory.save()
 
         logger.info("Released: %s x %s for order %s", product_id, quantity, order_id)
+
+
+def _publish_inventory_reserved(correlation_id, order_id, product_id, quantity):
+    envelope = EventEnvelope(
+        event_type=INVENTORY_RESERVED,
+        correlation_id=correlation_id,
+        payload={
+            "correlation_id": correlation_id,
+            "order_id": order_id,
+            "product_id": product_id,
+            "quantity": quantity,
+        },
+    )
+    OutboxService.create_event(
+        event_id=envelope.event_id,
+        event_type=envelope.event_type,
+        payload=envelope.to_dict(),
+    )
+
+
+def _publish_inventory_failed(correlation_id, order_id, product_id, reason):
+    envelope = EventEnvelope(
+        event_type=INVENTORY_FAILED,
+        correlation_id=correlation_id,
+        payload={
+            "correlation_id": correlation_id,
+            "order_id": order_id,
+            "product_id": product_id,
+            "reason": reason,
+        },
+    )
+    OutboxService.create_event(
+        event_id=envelope.event_id,
+        event_type=envelope.event_type,
+        payload=envelope.to_dict(),
+    )
