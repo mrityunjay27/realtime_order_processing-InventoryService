@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 from inventory.events.event_envelope import EventEnvelope
 from inventory.events.idempotency import IdempotencyService
-from inventory.events.inventory_events import ORDER_CREATED, ORDER_CREATED_RETRY
+from inventory.events.inventory_events import ORDER_CREATED, ORDER_CREATED_RETRY, RELEASE_INVENTORY, RELEASE_INVENTORY_RETRY
 from inventory.events.failure_handler import FailureHandler
 from inventory.services.inventory_service import InventoryService
 
@@ -23,11 +23,17 @@ class KafkaEventConsumer:
             "enable.auto.commit": False,
         }
         self.consumer = Consumer(config)
-        self.failure_handler = FailureHandler(
-            retry_topic="orders.created.retry",
-            dlq_topic="orders.created.dlq",
-        )
-        self.consumer.subscribe([ORDER_CREATED, ORDER_CREATED_RETRY])
+        self.failure_handlers = {
+            ORDER_CREATED: FailureHandler(
+                retry_topic="orders.created.retry",
+                dlq_topic="orders.created.dlq",
+            ),
+            RELEASE_INVENTORY: FailureHandler(
+                retry_topic="inventory.release.retry",
+                dlq_topic="inventory.release.dlq",
+            ),
+        }
+        self.consumer.subscribe([ORDER_CREATED, ORDER_CREATED_RETRY, RELEASE_INVENTORY, RELEASE_INVENTORY_RETRY])
 
     def handle_order_created(self, envelope: EventEnvelope):
         event = envelope.payload
@@ -36,6 +42,19 @@ class KafkaEventConsumer:
 
         for item in event["items"]:
             InventoryService.reserve_inventory(
+                correlation_id=envelope.correlation_id,
+                order_id=event["order_id"],
+                product_id=item["product_id"],
+                quantity=item["quantity"],
+            )
+
+    def handle_release_inventory(self, envelope: EventEnvelope):
+        event = envelope.payload
+
+        logger.info("Received release-inventory event [%s]: %s", envelope.correlation_id, event)
+
+        for item in event["items"]:
+            InventoryService.release_inventory(
                 correlation_id=envelope.correlation_id,
                 order_id=event["order_id"],
                 product_id=item["product_id"],
@@ -69,6 +88,10 @@ class KafkaEventConsumer:
                             self.handle_order_created(envelope)
                             IdempotencyService.mark_processed(envelope.event_id, envelope.event_type)
 
+                        elif envelope.event_type in (RELEASE_INVENTORY, RELEASE_INVENTORY_RETRY):
+                            self.handle_release_inventory(envelope)
+                            IdempotencyService.mark_processed(envelope.event_id, envelope.event_type)
+
                         else:
                             logger.warning("No handler for event_type %s", envelope.event_type)
 
@@ -82,7 +105,13 @@ class KafkaEventConsumer:
 
                 except Exception as exc:
                     self.consumer.commit(msg)
-                    self.failure_handler.handle(envelope_dict, exc)
+                    # Route to the correct failure handler based on base event type
+                    base_type = envelope.event_type.replace(".retry", "")
+                    handler = self.failure_handlers.get(base_type)
+                    if handler:
+                        handler.handle(envelope_dict, exc)
+                    else:
+                        logger.exception("No failure handler for event_type %s", envelope.event_type)
 
         except KeyboardInterrupt:
             pass
