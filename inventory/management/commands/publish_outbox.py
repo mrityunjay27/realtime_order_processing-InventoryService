@@ -10,6 +10,7 @@ from confluent_kafka import Producer
 from django.conf import settings
 
 from inventory.models.outbox_event import OutboxEvent
+from inventory.events.audit.services import EventHistoryService
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class Command(BaseCommand):
                         status=OutboxEvent.Status.PUBLISHED,
                         published_at=timezone.now(),
                     )
+                    EventHistoryService.mark_published_success(event.event_id)
                     count += 1
 
                 except Exception:
@@ -65,5 +67,6 @@ class Command(BaseCommand):
                     OutboxEvent.objects.filter(id=event.id).update(
                         status=OutboxEvent.Status.FAILED,
                     )
+                    EventHistoryService.mark_published_failed(event.event_id)
 
         return count

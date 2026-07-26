@@ -7,6 +7,8 @@ from inventory.models import Inventory
 from inventory.events.event_envelope import EventEnvelope
 from inventory.events.inventory_events import INVENTORY_RESERVED, INVENTORY_FAILED, INVENTORY_RELEASED
 from inventory.events.outbox_service import OutboxService
+from inventory.events.audit.services import EventHistoryService
+from inventory.events.audit.constants import AGGREGATE_INVENTORY, format_aggregate_id
 from inventory.events.exceptions import (
     RetryableEventException,
     NonRetryableEventException,
@@ -78,6 +80,14 @@ def _publish_inventory_reserved(correlation_id, order_id, product_id, quantity):
         event_type=envelope.event_type,
         payload=envelope.to_dict(),
     )
+    EventHistoryService.record_published(
+        event_id=envelope.event_id,
+        event_type=envelope.event_type,
+        correlation_id=correlation_id,
+        aggregate_type=AGGREGATE_INVENTORY,
+        aggregate_id=format_aggregate_id(AGGREGATE_INVENTORY, product_id),
+        payload=envelope.to_dict(),
+    )
 
 
 def _publish_inventory_failed(correlation_id, order_id, product_id, reason):
@@ -96,6 +106,14 @@ def _publish_inventory_failed(correlation_id, order_id, product_id, reason):
         event_type=envelope.event_type,
         payload=envelope.to_dict(),
     )
+    EventHistoryService.record_published(
+        event_id=envelope.event_id,
+        event_type=envelope.event_type,
+        correlation_id=correlation_id,
+        aggregate_type=AGGREGATE_INVENTORY,
+        aggregate_id=format_aggregate_id(AGGREGATE_INVENTORY, product_id),
+        payload=envelope.to_dict(),
+    )
 
 
 def _publish_inventory_released(correlation_id, order_id, product_id, quantity):
@@ -112,5 +130,13 @@ def _publish_inventory_released(correlation_id, order_id, product_id, quantity):
     OutboxService.create_event(
         event_id=envelope.event_id,
         event_type=envelope.event_type,
+        payload=envelope.to_dict(),
+    )
+    EventHistoryService.record_published(
+        event_id=envelope.event_id,
+        event_type=envelope.event_type,
+        correlation_id=correlation_id,
+        aggregate_type=AGGREGATE_INVENTORY,
+        aggregate_id=format_aggregate_id(AGGREGATE_INVENTORY, product_id),
         payload=envelope.to_dict(),
     )

@@ -10,6 +10,8 @@ from inventory.events.event_envelope import EventEnvelope
 from inventory.events.idempotency import IdempotencyService
 from inventory.events.inventory_events import ORDER_CREATED, ORDER_CREATED_RETRY, RELEASE_INVENTORY, RELEASE_INVENTORY_RETRY
 from inventory.events.failure_handler import FailureHandler
+from inventory.events.audit.services import EventHistoryService
+from inventory.events.audit.constants import AGGREGATE_INVENTORY, format_aggregate_id
 from inventory.services.inventory_service import InventoryService
 
 
@@ -61,6 +63,12 @@ class KafkaEventConsumer:
                 quantity=item["quantity"],
             )
 
+    def _extract_aggregate_id(self, envelope: EventEnvelope) -> str:
+        items = envelope.payload.get("items", [])
+        if items:
+            return items[0].get("product_id", "unknown")
+        return "unknown"
+
     def start(self):
 
         logger.info("Inventory Consumer Started...")
@@ -88,9 +96,29 @@ class KafkaEventConsumer:
                             self.handle_order_created(envelope)
                             IdempotencyService.mark_processed(envelope.event_id, envelope.event_type)
 
+                            aggregate_id = self._extract_aggregate_id(envelope)
+                            EventHistoryService.record_consumed(
+                                event_id=envelope.event_id,
+                                event_type=envelope.event_type,
+                                correlation_id=envelope.correlation_id,
+                                aggregate_type=AGGREGATE_INVENTORY,
+                                aggregate_id=format_aggregate_id(AGGREGATE_INVENTORY, aggregate_id),
+                                payload=envelope.to_dict(),
+                            )
+
                         elif envelope.event_type in (RELEASE_INVENTORY, RELEASE_INVENTORY_RETRY):
                             self.handle_release_inventory(envelope)
                             IdempotencyService.mark_processed(envelope.event_id, envelope.event_type)
+
+                            aggregate_id = self._extract_aggregate_id(envelope)
+                            EventHistoryService.record_consumed(
+                                event_id=envelope.event_id,
+                                event_type=envelope.event_type,
+                                correlation_id=envelope.correlation_id,
+                                aggregate_type=AGGREGATE_INVENTORY,
+                                aggregate_id=format_aggregate_id(AGGREGATE_INVENTORY, aggregate_id),
+                                payload=envelope.to_dict(),
+                            )
 
                         else:
                             logger.warning("No handler for event_type %s", envelope.event_type)
@@ -105,7 +133,20 @@ class KafkaEventConsumer:
 
                 except Exception as exc:
                     self.consumer.commit(msg)
-                    # Route to the correct failure handler based on base event type
+
+                    aggregate_id = envelope.payload.get("order_id", "unknown")
+                    items = envelope.payload.get("items", [])
+                    if items:
+                        aggregate_id = items[0].get("product_id", aggregate_id)
+                    EventHistoryService.record_consumed_failed(
+                        event_id=envelope.event_id,
+                        event_type=envelope.event_type,
+                        correlation_id=envelope.correlation_id,
+                        aggregate_type=AGGREGATE_INVENTORY,
+                        aggregate_id=format_aggregate_id(AGGREGATE_INVENTORY, aggregate_id),
+                        payload=envelope.to_dict(),
+                    )
+
                     base_type = envelope.event_type.replace(".retry", "")
                     handler = self.failure_handlers.get(base_type)
                     if handler:
