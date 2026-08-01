@@ -9,6 +9,8 @@ from django.utils import timezone
 from confluent_kafka import Producer
 from django.conf import settings
 
+from core.logging import context as logging_context
+
 from inventory.models.outbox_event import OutboxEvent
 from inventory.events.audit.services import EventHistoryService
 
@@ -50,7 +52,15 @@ class Command(BaseCommand):
             )
 
             for event in pending_events:
+                envelope_dict = event.payload
+                logging_context.set_context(
+                    correlation_id=envelope_dict.get("correlation_id"),
+                    event_id=envelope_dict.get("event_id"),
+                    event_type=envelope_dict.get("event_type"),
+                )
                 try:
+                    logger.info("Publishing event to Kafka", extra={"topic": event.event_type})
+
                     payload = json.dumps(event.payload).encode("utf-8")
                     self.producer.produce(event.event_type, value=payload)
                     self.producer.flush()
@@ -60,13 +70,18 @@ class Command(BaseCommand):
                         published_at=timezone.now(),
                     )
                     EventHistoryService.mark_published_success(event.event_id)
+
+                    logger.info("Event published successfully", extra={"topic": event.event_type})
                     count += 1
 
                 except Exception:
-                    logger.exception("Failed to publish outbox event %s", event.id)
+                    logger.exception("Failed to publish outbox event", extra={"topic": event.event_type})
                     OutboxEvent.objects.filter(id=event.id).update(
                         status=OutboxEvent.Status.FAILED,
                     )
                     EventHistoryService.mark_published_failed(event.event_id)
+
+                finally:
+                    logging_context.clear_context()
 
         return count

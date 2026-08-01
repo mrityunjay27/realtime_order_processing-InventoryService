@@ -23,6 +23,12 @@ class InventoryService:
     @transaction.atomic
     def reserve_inventory(correlation_id: str, order_id: str, product_id: str, quantity: int):
 
+        logger.info(
+            "Inventory reservation started for order %s product %s",
+            order_id,
+            product_id,
+        )
+
         try:
             inventory = Inventory.objects.select_for_update().get(
                 product_id=product_id
@@ -47,10 +53,15 @@ class InventoryService:
         logger.info("Reserved: %s x %s for order %s", product_id, quantity, order_id)
 
         return True
-
     @staticmethod
     @transaction.atomic
     def release_inventory(correlation_id: str, order_id: str, product_id: str, quantity: int):
+
+        logger.info(
+            "Inventory release started for order %s product %s",
+            order_id,
+            product_id,
+        )
 
         inventory = Inventory.objects.select_for_update().get(
             product_id=product_id

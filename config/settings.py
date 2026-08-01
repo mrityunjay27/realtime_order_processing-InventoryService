@@ -10,7 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
+
+from core.logging.config import get_logging_config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -27,6 +30,9 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
+# Identity used as the `service` field in every structured log record.
+SERVICE_NAME = os.getenv("SERVICE_NAME", "inventory-service")
+
 
 # Application definition
 
@@ -42,6 +48,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'core.logging.middleware.CorrelationMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -124,22 +131,4 @@ STATIC_URL = 'static/'
 
 KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"
 
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-        },
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "INFO",
-    },
-    "loggers": {
-        "django.db.backends": {
-            "handlers": ["console"],
-            "level": "DEBUG",
-        },
-    },
-}
+LOGGING = get_logging_config(service_name=SERVICE_NAME)
