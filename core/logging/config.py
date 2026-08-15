@@ -6,8 +6,9 @@ setting (see config/settings.py):
 
     LOGGING = get_logging_config(service_name=SERVICE_NAME)
 
-Every log record is emitted as a single JSON line to stdout so it can be
-picked up by Docker/Kubernetes and shipped to Loki/Elasticsearch/etc.
+Every log record is emitted as a single JSON line both to stdout and to
+logs/application.log. The file is mounted read-only into the Alloy
+container, which tails it and ships the JSON lines to Loki.
 """
 
 import os
@@ -16,6 +17,11 @@ from django.conf import settings
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DB_LOG_LEVEL = os.getenv("DB_LOG_LEVEL", "INFO")
+LOG_FILE_PATH = os.getenv("LOG_FILE_PATH", None)
+
+# Rotate the file once it reaches 10MB, keep 3 backups.
+LOG_FILE_MAX_BYTES = int(os.getenv("LOG_FILE_MAX_BYTES", "10485760"))
+LOG_FILE_BACKUP_COUNT = int(os.getenv("LOG_FILE_BACKUP_COUNT", "3"))
 
 
 def setup_logging():
@@ -26,6 +32,9 @@ def setup_logging():
 
 
 def get_logging_config(service_name: str = None) -> dict:
+    log_file_path = LOG_FILE_PATH or str(settings.BASE_DIR / "logs" / "application.log")
+    os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+
     return {
         "version": 1,
         "disable_existing_loggers": False,
@@ -46,9 +55,17 @@ def get_logging_config(service_name: str = None) -> dict:
                 "formatter": "json",
                 "filters": ["context"],
             },
+            "file": {
+                "class": "logging.handlers.RotatingFileHandler",
+                "filename": log_file_path,
+                "maxBytes": LOG_FILE_MAX_BYTES,
+                "backupCount": LOG_FILE_BACKUP_COUNT,
+                "formatter": "json",
+                "filters": ["context"],
+            },
         },
         "root": {
-            "handlers": ["console"],
+            "handlers": ["console", "file"],
             "level": LOG_LEVEL,
         },
         "loggers": {

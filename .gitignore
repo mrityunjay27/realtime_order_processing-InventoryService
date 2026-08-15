@@ -12,3 +12,7 @@ venv/
 
 # IDE
 .idea/
+
+# Logs (keep the directory, ignore the files)
+logs/*
+!logs/.gitkeep
